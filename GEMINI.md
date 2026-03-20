@@ -17,3 +17,4 @@ System overview
 
 The equipment
 - VR : oculus 2 or hololen (In final we will use only one VR, but now when it have some thing that specific about VR brand just suggest me two brand)
+
