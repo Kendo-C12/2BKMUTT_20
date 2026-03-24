@@ -34,6 +34,10 @@ import time
 import wave
 from datetime import datetime
 
+import io
+
+from main import init_all, run_kmutt_assistant
+
 try:
     import pyaudio
 except ImportError:
@@ -271,6 +275,14 @@ def save_utterance(frames: list, output_dir: str, idx: int) -> str:
         wf.writeframes(b"".join(frames))
     dur = len(frames) * FRAME_DURATION / 1000
     print(f"\n  SAVED: {os.path.basename(path)}  ({dur:.2f}s)")
+
+    with open(path, "rb") as f:
+        wav_io = io.BytesIO(f.read())
+
+    wav_io.seek(0)
+
+    run_kmutt_assistant(wav_io, 0)
+    
     return path
 
 
@@ -399,6 +411,8 @@ WebRTC aggressiveness (--mode):
 
 
 if __name__ == "__main__":
+    init_all() 
+    
     args = parse_args()
     run(
         vad_mode=args.mode,

@@ -91,11 +91,12 @@ def run_kmutt_assistant(audio_input, output_index):
     sd.play(data, samplerate)
     sd.wait()
         
-
-if __name__ == "__main__":
+def init_all():
     mouth.init_mouth()
     ears.init_ears()
     brain.init_brain()
+if __name__ == "__main__":
+    init_all()
 
     files = os.listdir(directory)
     found_input_numbers = []
