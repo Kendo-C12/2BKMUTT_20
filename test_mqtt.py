@@ -2,6 +2,7 @@ import os
 import re
 
 import time
+import keyboard
 from paho.mqtt import client as mqtt_client
 
 import io
@@ -25,6 +26,8 @@ directory = "."
 check_filename = "input.wav"
 
 flag = False
+
+last_flag = time.time()
 
 '''
 ears.listen(BytesIO(.wav)) -> text
@@ -55,7 +58,7 @@ def publish(msg):
     if status == 0:
         print(f"Send `{msg}` to topic `{topic_publish}`")
     else:
-        print(f"Failed to send message to topic {topic_publish}")
+        print(f"Failed to send message to topic {topic_publish}, status: {status}")
         flag = False
 
 def subscribe():
@@ -83,11 +86,23 @@ if __name__ == "__main__":
     ears.init_ears()
     connect_mqtt()
     subscribe()
+    client.loop_forever()
+    
+    def reset_flag(e):
+        global flag
+        if flag: # Only print if it was actually True
+            flag = False
+            print("\n--- Spacebar pressed: System Ready ---")
+
+    # Register the hotkey to trigger whenever space is pressed
+    keyboard.on_press_key("space", reset_flag)
+
     while True:
         time.sleep(0.5)
         if flag:
             print("Wait for flag...")
             continue
+
         print("Ready to record...")
         audio_bytes = ears.record_audio(fs=16000)
         publish(audio_bytes.getvalue())

@@ -3,18 +3,19 @@ from qa_pipline import QAPipeline
 qa_model = None
 kmutt_context = None
 
-model_name = "airesearch/wangchanberta-base-wiki-20210520-spm-finetune-qa"
-# model_name = "deepset/roberta-large-squad2"
+# model_name = "airesearch/wangchanberta-base-wiki-20210520-spm-finetune-qa"
+model_name = "deepset/roberta-large-squad2"
 
 def init_brain():
     global qa_model, kmutt_context
     
     # 1. Load context
-    with open("context_thai.txt", "r", encoding="utf-8") as f:
+    with open("context_english.txt", "r", encoding="utf-8") as f:
         kmutt_context = f.read()
 
     # 3. Create pipeline using the objects instead of the string name
     qa_model = QAPipeline(model_name)
+    # qa_model = pipeline("question-answering", model=model_name)
 
 def think(question):
     global qa_model, kmutt_context
@@ -24,5 +25,5 @@ def think(question):
 
 if __name__ == "__main__":
     init_brain()
-    q = "What is KMUTT?"
+    q = "What is 2B-KMUTT?"
     print(f"Answer: {think(q)}")

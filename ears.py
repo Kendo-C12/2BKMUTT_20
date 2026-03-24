@@ -88,7 +88,7 @@ def listen(bytes_wav):
     # Run ASR directly on numpy array
     result = pipe(
         audio,
-        generate_kwargs={"language": "thai", "task": "transcribe"}
+        generate_kwargs={"language": "english", "task": "transcribe"}
     )
 
     return result["text"]

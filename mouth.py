@@ -1,40 +1,35 @@
 import torch
-from transformers import VitsModel, AutoTokenizer
+from transformers import VitsModel, VitsTokenizer
 import scipy.io.wavfile
 
 import numpy as np
-
 import io
-
 import soundfile as sf
 import sounddevice as sd
 
 model = None
 tokenizer = None
 
-model_name = "facebook/mms-tts-tha"
+model_name = "facebook/mms-tts-eng"
 
 def init_mouth():
     global model, tokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = VitsTokenizer.from_pretrained(model_name)
     model = VitsModel.from_pretrained(model_name)
+
+    model.eval()
     return model, tokenizer
 
 def normalize_audio(audio):
-    # Remove extra dimensions if they exist
     audio = audio.cpu().numpy()
-
-    # remove extra dims if needed
     audio = np.squeeze(audio)
 
-    # normalize to [-1, 1]
-    audio = audio / np.max(np.abs(audio))
+    max_val = np.max(np.abs(audio))
+    if max_val > 0:
+        audio = audio / max_val
 
-    # convert to int16
-    audio_int16 = (audio * 32767).astype(np.int16)
-
-    return audio_int16
+    return (audio * 32767).astype(np.int16)
 
 def speak(text):
     global model, tokenizer
@@ -42,16 +37,18 @@ def speak(text):
     inputs = tokenizer(text, return_tensors="pt")
 
     with torch.no_grad():
-        output = model(**inputs).waveform
+        output = model(**inputs)
 
-    audio = normalize_audio(output)
+    waveform = output.waveform
+    audio = normalize_audio(waveform)
 
-    # Write to in-memory buffer instead of file
+    samplerate = getattr(model.config, "sampling_rate", 22050)
+
     buffer = io.BytesIO()
-    scipy.io.wavfile.write(buffer, model.config.sampling_rate, audio)
+    scipy.io.wavfile.write(buffer, samplerate, audio)
 
-    buffer.seek(0)  # VERY IMPORTANT
-    buffer.name = "response.wav"  # optional but useful
+    buffer.seek(0)
+    buffer.name = "response.wav"
 
     return buffer
 
@@ -60,16 +57,13 @@ if __name__ == "__main__":
 
     init_mouth()
 
-    # kmutt_context = None
-    # with open("context.txt", "r", encoding="utf-8") as f:
-    #     kmutt_context = f.read()
+    wav_bytes = speak("Hello, this is a test of the mouth module.")
 
-    wav_bytes = speak("เป็นอย่างไรบ้าง ที่นี้คือ มหาลัย.")
-    
     input("Enter to continue...")
-    
+
     wav_bytes.seek(0)
     data, samplerate = sf.read(wav_bytes, dtype='float32')
+
     sd.play(data, samplerate=samplerate)
     sd.wait()
 
