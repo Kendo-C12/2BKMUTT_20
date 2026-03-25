@@ -6,7 +6,7 @@ from paho.mqtt import client as mqtt_client
 # broker = 'broker.emqx.io'
 broker = 'test.mosquitto.org'
 port = 1883
-topic = "KMUTT/2BKMUTT"
+topic = "M2MQTT_Unity/test"
 
 client_id = f'publish-1'
 
