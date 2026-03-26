@@ -94,7 +94,8 @@ REF_RMS = 32768.0         # 16-bit full-scale reference for dBFS
 client = None
 
 client_id = "sound_telesorting"
-broker = 'test.mosquitto.org'
+# broker = 'test.mosquitto.org'
+broker = '10.22.10.1'
 port = 1883
 topic = "2BKMUTT/KMUTT"
 
@@ -105,10 +106,10 @@ NUMBER_MAP = {
     "three": 3,
     "four": 4, "for": 4,
     "five": 5,
-    "six": 6,
+    "six": 6, "sick": 6, # problem: "six" can be misrecognized
     "seven": 7,
-    "eight": 8, "ate": 8,
-    "nine": 9,
+    "eight": 8, "ate": 8, "egg": 8,
+    "nine": 9, "nigh": 9,
     "ten": 10
 }
 
@@ -468,13 +469,15 @@ WebRTC aggressiveness (--mode):
 
 
 if __name__ == "__main__":
+    args = parse_args()
+    print(f"Run with args: {args}\n")
+
     ears.init_ears()
 
     pub_function.init_mqtt(client_id, broker, port, topic)
     client = pub_function.connect_mqtt()
     client.loop_start()
 
-    args = parse_args()
     run(
         vad_mode=args.mode,
         output_dir=args.output_dir,

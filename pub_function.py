@@ -4,8 +4,8 @@ import json
 from paho.mqtt import client as mqtt_client
 
 # broker = 'mqtt.eclipseprojects.io'
-broker = 'broker.emqx.io'
-# broker = 'test.mosquitto.org'
+# broker = 'broker.emqx.io'
+broker = 'test.mosquitto.org'
 port = 1883
 topic = "2BKMUTT/KMUTT"
 
@@ -14,7 +14,7 @@ client_id = f'test_PC'
 msg_template = {
     "id": 3000,          # 🔹 better as number
     "type": "String",
-    "value": "1",
+    "value": 1,
     "detail": "PC"
 }
 

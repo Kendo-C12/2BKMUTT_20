@@ -7,7 +7,8 @@ import keyboard
 
 # broker = 'mqtt.eclipseprojects.io'
 # broker = 'broker.emqx.io'
-broker = 'test.mosquitto.org'
+# broker = 'test.mosquitto.org'
+broker = '10.22.10.1'
 port = 1883
 topic = "2BKMUTT/KMUTT"
 
@@ -29,10 +30,6 @@ def keyboard_control(client):
 
             if key.isdigit() and len(key) == 1:
                 num = int(key)
-
-                # 🔹 map 0 → 10
-                if num == 0:
-                    num = 10
 
                 print(f"Sending: {num}")
                 publish(client, num)

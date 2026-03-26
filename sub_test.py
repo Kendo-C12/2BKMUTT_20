@@ -5,9 +5,9 @@ from paho.mqtt import client as mqtt_client
 
 # broker = 'mqtt.eclipseprojects.io'
 # broker = 'broker.emqx.io'
-broker = 'test.mosquitto.org'
+broker = '10.22.10.1'
 port = 1883
-topic = "tss/1/rpc/request/1"
+topic = "tss/1/sensor/10"
 
 client_id = f'sub_test'
 
@@ -33,6 +33,7 @@ def subscribe(client: mqtt_client):
             # 🔹 Try parse JSON
             data = json.loads(payload)
 
+            print(f"Received JSON: {data}")
             # 🔹 Extract fields safely
             cmd = data.get("cmd", "N/A")
             param = data.get("param", [])
