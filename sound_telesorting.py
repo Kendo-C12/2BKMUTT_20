@@ -39,7 +39,7 @@ import re
 import io
 
 # from main import init_all, run_kmutt_assistant
-import ears
+import ears_number
 
 import pub_function
 
@@ -327,10 +327,10 @@ def save_utterance(frames: list, output_dir: str, idx: int) -> str:
 
     try:
         wav_io.seek(0)  # IMPORTANT
-        user_speech = ears.listen(wav_io)
+        user_speech = ears_number.listen(wav_io)
         print(f"  Transcribed text: {user_speech}")
 
-        num = extract_number(user_speech)
+        num = ears_number.text_to_number(user_speech)
 
         if num is not None:
             print(f"  ✅ Detected number: {num} → publishing")
@@ -472,7 +472,7 @@ if __name__ == "__main__":
     args = parse_args()
     print(f"Run with args: {args}\n")
 
-    ears.init_ears()
+    ears_number.init_ears()
 
     pub_function.init_mqtt(client_id, broker, port, topic)
     client = pub_function.connect_mqtt()

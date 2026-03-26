@@ -1,34 +1,25 @@
-from sys import prefix
-from time import time
 import time
 import keyboard
+import json
 
-import torch
 import sounddevice as sd
-from scipy.io.wavfile import write
 import numpy as np
-from transformers import pipeline
-
-import os
-import re
-
+from scipy.io.wavfile import write
 from scipy.io import wavfile
 
 import io
 
-pipe = None
+from vosk import Model, KaldiRecognizer
+
+model = None
 
 def init_ears():
-    global pipe
-    # Initialize the ASR pipeline
-    pipe = pipeline(
-        "automatic-speech-recognition",
-        model="openai/whisper-base",
-        device=-1 
-    )
+    global model
+    print("Loading Vosk model...")
+    model = Model("vosk-model-small-en-us-0.15")  # 🔥 change path if needed
+    print("Model loaded.")
 
 def record_audio(fs=16000):
-    """Record audio until 'n' is pressed, return io.BytesIO containing WAV bytes."""
     print("Press 'y' to start recording...")
     while True:
         if keyboard.is_pressed('y'):
@@ -47,56 +38,61 @@ def record_audio(fs=16000):
             if keyboard.is_pressed('n'):
                 break
 
-    # Concatenate all chunks
     audio_data = np.concatenate(recording, axis=0)
 
-    # Convert to int16 for WAV
     audio_int16 = (audio_data * 32767).astype(np.int16)
 
-    # Save to BytesIO instead of a file
     bytes_wav = io.BytesIO()
     write(bytes_wav, fs, audio_int16)
-    bytes_wav.seek(0)  # rewind for reading
-    print("Recording stopped. Audio is in memory.")
+    bytes_wav.seek(0)
+
+    print("Recording stopped.")
     return bytes_wav
 
 def listen(bytes_wav):
-    global pipe
+    global model
 
-    print("Processing audio from memory...")
+    print("Processing audio with Vosk...")
 
-    # Read WAV from BytesIO
     bytes_wav.seek(0)
     rate, audio = wavfile.read(bytes_wav)
 
-    # Convert to float32
-    if audio.dtype != np.float32:
-        audio = audio.astype(np.float32)
-
-    # Normalize if needed
-    if np.max(np.abs(audio)) > 1:
-        audio = audio / 32767.0
-
-    max_val = np.max(np.abs(audio))
-    if max_val > 0:
-        audio = audio / max_val
-
-    # Whisper expects 1D array
     if len(audio.shape) > 1:
         audio = audio.squeeze()
 
-    # Run ASR directly on numpy array
-    result = pipe(
-        audio,
-        generate_kwargs={"language": "english", "task": "transcribe"}
-    )
+    # 🔥 Grammar محدود to numbers 0–10
+    grammar = '["zero","one","two","three","four","five","six","seven","eight","nine","ten"]'
 
-    return result["text"]
+    rec = KaldiRecognizer(model, rate, grammar)
+
+    rec.AcceptWaveform(audio.tobytes())
+    result = json.loads(rec.FinalResult())
+
+    return result.get("text", "")
+
+# 🔥 Convert text → number
+def text_to_number(text):
+    mapping = {
+        "zero": 0, "one": 1, "two": 2,
+        "three": 3, "four": 4, "five": 5, 
+        "six": 6, "seven": 7, "eight": 8, 
+        "nine": 9, "ten": 10
+    }
+    return mapping.get(text.lower(), None)
 
 if __name__ == "__main__":
     init_ears()
+
     while True:
         print("Ready to record...")
         audio_bytes = record_audio(fs=16000)
+
         text = listen(audio_bytes)
+        number = text_to_number(text)
+
         print(f"I heard: {text}")
+
+        if number is not None:
+            print(f"Detected number: {number}")
+        else:
+            print("Invalid / noise")
