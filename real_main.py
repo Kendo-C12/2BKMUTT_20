@@ -34,29 +34,26 @@ import time
 import wave
 from datetime import datetime
 
+from scipy.io import wavfile
+
 import re
 
 import io
 
 # from main import init_all, run_kmutt_assistant
 import ears_fix
+import main
 
-import pub_function
+import sounddevice as sd
 
-try:
-    import pyaudio
-except ImportError:
-    sys.exit("ERROR: pyaudio not found.  pip install pyaudio")
+import pyaudio
+import webrtcvad
+import numpy as np
 
-try:
-    import webrtcvad
-except ImportError:
-    sys.exit("ERROR: webrtcvad not found.  pip install webrtcvad-wheels")
-
-try:
-    import numpy as np
-except ImportError:
-    sys.exit("ERROR: numpy not found.  pip install numpy")
+import random
+import time
+import json
+from paho.mqtt import client as mqtt_client
 
 
 # ─────────────────────────── Audio constants ────────────────────────────────
@@ -90,48 +87,60 @@ DB_MAX            = 0     # dB ceiling (0 dBFS)
 
 REF_RMS = 32768.0         # 16-bit full-scale reference for dBFS
 
-# MQTT constants
+# ─────────────────────────── MQTT ────────────────────────────────
 client = None
 
 client_id = "sound_telesorting"
-# broker = 'test.mosquitto.org'
 broker = '10.22.10.1'
 port = 1883
-topic = "2BKMUTT/KMUTT"
 
-NUMBER_MAP = {
-    "zero": 0, "oh": 0,
-    "one": 1, "won": 1,
-    "two": 2, "to": 2, "too": 2,
-    "three": 3,
-    "four": 4, "for": 4,
-    "five": 5,
-    "six": 6, "sick": 6, # problem: "six" can be misrecognized
-    "seven": 7,
-    "eight": 8, "ate": 8, "egg": 8,
-    "nine": 9, "nigh": 9,
-    "ten": 10
+# publish topic
+topic_listener = "PC/LISTENER"
+topic_in_speak = "PC/IN_SPEAK"
+
+# receive topic
+topic_permission = "UNITY/PERMISSION"
+topic_play_sound = "UNITY/PLAY_SOUND"
+
+msg_template = {
+    "id": 3000,          # 🔹 better as number
+    "type": "String",
+    "value": 1,
+    "detail": "PC"
 }
 
-# ─────────────────────────── Helpers ─────────────────────────────────────────
-def extract_number(text: str):
-    if not text:
-        return None
+# ─────────────────────────── STATE ────────────────────────────────
+DONT_ALLOW_SPEECH = 0
+QA_ALLOW_FIBO = 1
+QA_ALLOW_TELESORTING = 2
+
+YES_NO_MODE = 3
+NUMBER_MODE = 4
+
+get_state = {
+    "DONT_ALLOW_SPEECH": DONT_ALLOW_SPEECH,
+    "QA_ALLOW_FIBO": QA_ALLOW_FIBO,
+    "QA_ALLOW_TELESORTING": QA_ALLOW_TELESORTING,
+    "YES_NO_MODE": YES_NO_MODE,
+    "NUMBER_MODE": NUMBER_MODE
+}
+
+current_state = DONT_ALLOW_SPEECH
+
+# ─────────────────────────── Function ────────────────────────────────
+def play_wav_bytes(wav_bytes: io.BytesIO) -> None:
+    wav_bytes.seek(0)
     
-    text = text.lower()
+    rate, data = wavfile.read(wav_bytes)
+    sd.play(data, rate)
+    sd.wait()
 
-    # 1️⃣ Check digit first
-    digit_match = re.search(r"\d+", text)
-    if digit_match:
-        return int(digit_match.group())
-
-    # 2️⃣ Check word match (first match wins)
-    words = re.findall(r"[a-zA-Z]+", text)
-    for w in words:
-        if w in NUMBER_MAP:
-            return NUMBER_MAP[w]
-
-    return None
+def play_file_wav(filename: str) -> None:
+    with wave.open(filename, 'rb') as wf:
+        rate = wf.getframerate()
+        data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+    sd.play(data, rate)
+    sd.wait()
 
 def rms_of(raw: bytes) -> float:
     samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
@@ -327,16 +336,39 @@ def save_utterance(frames: list, output_dir: str, idx: int) -> str:
 
     try:
         wav_io.seek(0)  # IMPORTANT
-        user_speech = ears_fix.listen(wav_io)
-        print(f"  Transcribed text: {user_speech}")
+        if current_state == QA_ALLOW_FIBO or current_state == QA_ALLOW_TELESORTING:
+            if current_state == QA_ALLOW_FIBO:
+                context = main.context_fibo()
+            if current_state == QA_ALLOW_TELESORTING:
+                context = main.context_telesorting()
+            
+            buffer = main.run_kmutt_assistant(wav_io, context)
+            
+            if(buffer is not None):
+                print("  Playing assistant response...")
+                play_wav_bytes(buffer)
+            else:
+                print("  No response from assistant.")
+                play_file_wav("No_response.wav")
 
-        num = ears_fix.text_to_number(user_speech)
+        if current_state == NUMBER_MODE or current_state == YES_NO_MODE:
+            if current_state == NUMBER_MODE:
+                grammar = '["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]'
+            if current_state == YES_NO_MODE:
+                grammar = '["yes", "no"]'
 
-        if num is not None:
-            print(f"  ✅ Detected number: {num} → publishing")
-            pub_function.publish(client, str(num))
-        else:
-            print("  ❌ No valid number detected → not publishing")
+            user_speech = ears_fix.listen(wav_io)
+            print(f"  Transcribed text: {user_speech}")
+
+            ans = ears_fix.text_to_number(user_speech, grammar)
+
+            if ans is not None:
+                print(f"  ✅ Detected answer: {ans} → publishing")
+                publish(client = client, 
+                        topic = topic_listener,
+                        value = str(ans))
+            else:
+                print("  ❌ No valid answer detected → not publishing")
     except Exception as e:
         print(f"Error during listening: {e}")
         return
@@ -385,55 +417,67 @@ def run(vad_mode: int, output_dir: str, calibrate_first: bool, debug: bool):
     last_db_print = time.time()
 
     try:
-        while True:
-            raw = stream.read(FRAME_SIZE, exception_on_overflow=False)
-            if len(raw) != FRAME_BYTES:
-                continue
+        if current_state == DONT_ALLOW_SPEECH:
+            recording    = False
+            current_utt  = []
+            speech_ring.clear()
+            silence_ring.clear()
+        else:
+            while True:
+                raw = stream.read(FRAME_SIZE, exception_on_overflow=False)
+                if len(raw) != FRAME_BYTES:
+                    continue
 
-            is_sp, rms, db = classify(raw, vad, noise, debug)
+                is_sp, rms, db = classify(raw, vad, noise, debug)
 
-            # ── Accumulate for dB meter ──────────────────────────
-            db_window.append(rms)
-            now = time.time()
-            if now - last_db_print >= DB_PRINT_INTERVAL:
-                avg_rms    = float(np.mean(db_window)) if db_window else 0.0
-                avg_db     = rms_to_db(avg_rms)
-                thr_db     = rms_to_db(noise.threshold)
-                bar        = db_bar(avg_db)
-                status     = "SPEECH  " if recording else "silence "
-                indicator  = "<<<" if recording else "   "
-                print(f"  {avg_db:+6.1f} dBFS  {bar}  thr={thr_db:+.1f}  "
-                      f"{status} {indicator}", end="\r")
-                db_window.clear()
-                last_db_print = now
+                # ── Accumulate for dB meter ──────────────────────────
+                db_window.append(rms)
+                now = time.time()
+                if now - last_db_print >= DB_PRINT_INTERVAL:
+                    avg_rms    = float(np.mean(db_window)) if db_window else 0.0
+                    avg_db     = rms_to_db(avg_rms)
+                    thr_db     = rms_to_db(noise.threshold)
+                    bar        = db_bar(avg_db)
+                    status     = "SPEECH  " if recording else "silence "
+                    indicator  = "<<<" if recording else "   "
+                    print(f"  {avg_db:+6.1f} dBFS  {bar}  thr={thr_db:+.1f}  "
+                        f"{status} {indicator}", end="\r")
+                    db_window.clear()
+                    last_db_print = now
 
-            # ── VAD state machine ────────────────────────────────
-            if not recording:
-                pre_roll.append(raw)
-                speech_ring.append(is_sp)
+                # ── VAD state machine ────────────────────────────────
+                if not recording:
+                    pre_roll.append(raw)
+                    speech_ring.append(is_sp)
 
-                if len(speech_ring) == N_SPEECH:
-                    if sum(speech_ring) / N_SPEECH >= 0.6:
-                        recording   = True
-                        utt_idx    += 1
-                        current_utt = list(pre_roll)
-                        silence_ring.clear()
-                        print(f"\n  [{utt_idx}] Recording...", end="", flush=True)
+                    if len(speech_ring) == N_SPEECH:
+                        if sum(speech_ring) / N_SPEECH >= 0.6:
+                            recording   = True
+                            utt_idx    += 1
+                            current_utt = list(pre_roll)
+                            silence_ring.clear()
+                            print(f"\n  [{utt_idx}] Recording...", end="", flush=True)
+                            publish(client = client, 
+                                 topic = topic_in_speak,
+                                 value = "In speak")
+                            play_file_wav("Receiving_question.wav")
+                else:
+                    current_utt.append(raw)
+                    silence_ring.append(not is_sp)
 
-            else:
-                current_utt.append(raw)
-                silence_ring.append(not is_sp)
-
-                if len(silence_ring) == N_SILENCE:
-                    if sum(silence_ring) / N_SILENCE >= 0.85:
-                        dur = len(current_utt) * FRAME_DURATION / 1000
-                        print(f"  {dur:.1f}s  [END]")
-                        save_utterance(current_utt, output_dir, utt_idx)
-                        total_saved += 1
-                        recording    = False
-                        current_utt  = []
-                        speech_ring.clear()
-                        silence_ring.clear()
+                    if len(silence_ring) == N_SILENCE:
+                        if sum(silence_ring) / N_SILENCE >= 0.85:
+                            dur = len(current_utt) * FRAME_DURATION / 1000
+                            print(f"  {dur:.1f}s  [END]")
+                            save_utterance(current_utt, output_dir, utt_idx)
+                            total_saved += 1
+                            recording    = False
+                            current_utt  = []
+                            speech_ring.clear()
+                            silence_ring.clear()
+                            publish(client = client, 
+                                 topic = topic_in_speak,
+                                 value = "No speak")
 
     except KeyboardInterrupt:
         print("\n\nStopped.")
@@ -467,15 +511,75 @@ WebRTC aggressiveness (--mode):
                    help="Print per-frame W/E/Z flags")
     return p.parse_args()
 
+# ─────────────────────────── MQTT ─────────────────────────────────────────────
+
+def connect_mqtt():
+    def on_connect(client, userdata, flags, reason_code, properties):
+        if reason_code == 0:
+            print("Connected to MQTT Broker!")
+        else:
+            print(f"Failed to connect, return code {reason_code}")
+    client = mqtt_client.Client(mqtt_client.CallbackAPIVersion.VERSION2, client_id)
+    client.on_connect = on_connect
+    client.connect(broker, port)
+    return client
+
+
+def publish(client, topic, value):
+    msg_template["value"] = str(value)
+    msg_json = json.dumps(msg_template)
+
+    result = client.publish(topic, msg_json)
+    status = result[0]
+
+    if status == 0:
+        print(f"Send `{msg_json}` to topic `{topic}`")
+    else:
+        print(f"Failed to send message to topic {topic}")
+
+def subscribe(client: mqtt_client):
+    def on_message(client, userdata, msg, properties=None):
+        payload = msg.payload.decode()
+
+        try:
+            data = json.loads(payload)
+            print(f"Received JSON: {data}")
+            topic = data.get("cmd", "N/A")
+            output = data.get("output", "N/A")
+
+            print(f"[JSON] topic={topic}, output={output}")
+
+            if topic == topic_permission:
+                global current_state
+                if output in get_state:
+                    current_state = get_state[output]
+                    print(f"Updated state: {output} ({current_state})")
+                else:
+                    print(f"Unknown state in permission topic: {output}")
+            if topic == topic_play_sound:
+                print(f"Received play sound command: {output}")
+                if os.exists(output):
+                    play_file_wav(output)
+                else:
+                    print(f"Unknown command in tutorial topic: {output}")
+                publish(client = client, 
+                        topic = topic_in_speak,
+                        value = "No speak")
+        except json.JSONDecodeError:
+            print(f"[RAW] `{payload}` from `{msg.topic}`")
+
+    client.subscribe(topic_permission)
+    client.subscribe(topic_play_sound)
+    client.on_message = on_message
 
 if __name__ == "__main__":
     args = parse_args()
     print(f"Run with args: {args}\n")
 
+    main.init_all()
     ears_fix.init_ears()
 
-    pub_function.init_mqtt(client_id, broker, port, topic)
-    client = pub_function.connect_mqtt()
+    client = connect_mqtt()
     client.loop_start()
 
     run(

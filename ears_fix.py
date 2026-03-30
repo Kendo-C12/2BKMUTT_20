@@ -49,7 +49,7 @@ def record_audio(fs=16000):
     print("Recording stopped.")
     return bytes_wav
 
-def listen(bytes_wav):
+def listen(bytes_wav,grammar):
     global model
 
     print("Processing audio with Vosk...")
@@ -59,9 +59,6 @@ def listen(bytes_wav):
 
     if len(audio.shape) > 1:
         audio = audio.squeeze()
-
-    # 🔥 Grammar محدود to numbers 0–10
-    grammar = '["zero","one","two","three","four","five","six","seven","eight","nine","ten"]'
 
     rec = KaldiRecognizer(model, rate, grammar)
 

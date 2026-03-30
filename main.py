@@ -31,7 +31,7 @@ def next_index(index):
     return index
 
 
-def run_kmutt_assistant(audio_input, output_index):
+def run_kmutt_assistant(audio_input, context, output_index=0):
     # 1. LISTEN
     try:
         audio_input.seek(0)  # IMPORTANT

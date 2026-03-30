@@ -7,7 +7,6 @@ from paho.mqtt import client as mqtt_client
 # broker = 'broker.emqx.io'
 broker = 'test.mosquitto.org'
 port = 1883
-topic = "2BKMUTT/KMUTT"
 
 client_id = f'test_PC'
 
@@ -18,12 +17,11 @@ msg_template = {
     "detail": "PC"
 }
 
-def init_mqtt(_client_id=client_id, _broker=broker, _port=port, _topic=topic):
+def init_mqtt(_client_id=client_id, _broker=broker, _port=port):
     global client_id, broker, port, topic
     client_id = _client_id
     broker = _broker
     port = _port
-    topic = _topic
 
 
 def connect_mqtt():
@@ -39,7 +37,7 @@ def connect_mqtt():
     return client
 
 
-def publish(client, value):
+def publish(client, topic, value):
     # 🔹 update template
     msg_template["value"] = str(value)
 
