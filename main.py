@@ -52,7 +52,7 @@ def run_kmutt_assistant(audio_input, context, output_index=0):
 
     # 2. THINK
     try:
-        ai_answer = brain.think(user_speech)
+        ai_answer = brain.think(user_speech, context)
     except Exception as e:
         print(f"Error during thinking: {e}")
         return
@@ -83,13 +83,7 @@ def run_kmutt_assistant(audio_input, context, output_index=0):
 
     print(f"Audio saved to: {file_name_output}")
 
-    input("Press Enter to play the audio...")
-    
-    audio_output.seek(0)
-    data, samplerate = sf.read(audio_output, dtype='float32')
-
-    sd.play(data, samplerate)
-    sd.wait()
+    return audio_output
         
 def init_all():
     mouth.init_mouth()

@@ -4,10 +4,10 @@ import json
 from paho.mqtt import client as mqtt_client
 
 # broker = 'mqtt.eclipseprojects.io'
-# broker = 'broker.emqx.io'
-broker = '10.22.10.1'
+broker = 'broker.emqx.io'
+# broker = '10.22.10.1'
 port = 1883
-topic = "tss/1/sensor/10"
+topic = "tss/1/rpc/request/1"
 
 client_id = f'sub_test'
 

@@ -41,6 +41,7 @@ import re
 import io
 
 # from main import init_all, run_kmutt_assistant
+import db
 import ears_fix
 import main
 
@@ -91,56 +92,133 @@ REF_RMS = 32768.0         # 16-bit full-scale reference for dBFS
 client = None
 
 client_id = "sound_telesorting"
-broker = '10.22.10.1'
+broker = 'broker.emqx.io'
 port = 1883
 
 # publish topic
-topic_listener = "PC/LISTENER"
-topic_in_speak = "PC/IN_SPEAK"
+topic_publish_listener = "PC/LISTENER"
+topic_publish_in_speak = "PC/IN_SPEAK"
+topic_publish_db_values = "PC/DB_VALUES"
 
 # receive topic
-topic_permission = "UNITY/PERMISSION"
-topic_play_sound = "UNITY/PLAY_SOUND"
+topic_receive_permission = "UNITY/PERMISSION"
+topic_receive_play_sound = "UNITY/PLAY_SOUND"
 
 msg_template = {
-    "id": 3000,          # 🔹 better as number
-    "type": "String",
-    "value": 1,
-    "detail": "PC"
+    "topic": "",
+    "message": ""
 }
 
 # ─────────────────────────── STATE ────────────────────────────────
-DONT_ALLOW_SPEECH = 0
-QA_ALLOW_FIBO = 1
-QA_ALLOW_TELESORTING = 2
+DEACTIVATE_VAD = 1
+QA_ALLOW_FIBO = 2
+QA_ALLOW_TELESORTING = 3
 
-YES_NO_MODE = 3
-NUMBER_MODE = 4
+YES_NO_MODE = 4
+NUMBER_MODE = 5
 
-get_state = {
-    "DONT_ALLOW_SPEECH": DONT_ALLOW_SPEECH,
+state_to_num = {
+    "DEACTIVATE_VAD": DEACTIVATE_VAD,
     "QA_ALLOW_FIBO": QA_ALLOW_FIBO,
     "QA_ALLOW_TELESORTING": QA_ALLOW_TELESORTING,
     "YES_NO_MODE": YES_NO_MODE,
     "NUMBER_MODE": NUMBER_MODE
 }
 
-current_state = DONT_ALLOW_SPEECH
+num_to_state = {
+    DEACTIVATE_VAD: "DEACTIVATE_VAD",
+    QA_ALLOW_FIBO: "QA_ALLOW_FIBO",
+    QA_ALLOW_TELESORTING: "QA_ALLOW_TELESORTING",
+    YES_NO_MODE: "YES_NO_MODE",
+    NUMBER_MODE: "NUMBER_MODE"
+}
+
+current_state = DEACTIVATE_VAD
 
 # ─────────────────────────── Function ────────────────────────────────
+
+def get_db_values(wav_path, fps=18):
+    wf = wave.open(wav_path, 'rb')
+    sample_rate = wf.getframerate()
+    total_frames = wf.getnframes()
+    frames = wf.readframes(total_frames)
+    samples = np.frombuffer(frames, dtype=np.int16)
+    # Normalize [-1, 1]
+    samples = samples / 32768.0
+    # 🎯 Calculate chunk size based on FPS
+    samples_per_frame = int(sample_rate / fps)
+    db_values = []
+    for i in range(0, len(samples), samples_per_frame):
+        chunk = samples[i:i + samples_per_frame]
+        if len(chunk) == 0:
+            continue
+        rms = np.sqrt(np.mean(chunk**2))
+        if rms > 0:
+            db = 20 * np.log10(rms)
+        else:
+            db = -100
+        db_values.append(db)
+    return db_values
+
+def publish_swan(db_values, fps=18):
+    msg_template["topic"] = db_values
+    msg_template["message"] = db_values
+    publish(client, topic_publish_listener, str(db))    
+
 def play_wav_bytes(wav_bytes: io.BytesIO) -> None:
     wav_bytes.seek(0)
     
     rate, data = wavfile.read(wav_bytes)
+
     sd.play(data, rate)
     sd.wait()
 
 def play_file_wav(filename: str) -> None:
+    filename = "speech_list/" + filename
+    if not os.path.exists(filename):
+        print(f"File.wav not found: {filename}")
+        return
     with wave.open(filename, 'rb') as wf:
         rate = wf.getframerate()
         data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+    
+    # fps = 18
+    # db_values = get_db_values(filename, fps=fps)
+    # message = {
+    #     "topic": topic_publish_db_values,
+    #     "message": db_values,
+    #     "fps": fps
+    # }
+    # client.publish(topic_publish_db_values, json.dumps(message))
+
     sd.play(data, rate)
     sd.wait()
+
+def find_device_index(audio: pyaudio.PyAudio, name_substr: str) -> int:
+    """Return the first input device whose name contains name_substr (case-insensitive)."""
+    name_lower = name_substr.lower()
+    for i in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(i)
+        if info["maxInputChannels"] > 0 and name_lower in info["name"].lower():
+            return i
+    available = [
+        f'  [{i}] {audio.get_device_info_by_index(i)["name"]}'
+        for i in range(audio.get_device_count())
+        if audio.get_device_info_by_index(i)["maxInputChannels"] > 0
+    ]
+    raise ValueError(
+        f'No input device matching "{name_substr}".\n'
+        f'Available input devices:\n' + "\n".join(available)
+    )
+
+def list_input_devices(audio: pyaudio.PyAudio) -> None:
+    """Print all available input devices."""
+    print("\nAvailable input devices:")
+    for i in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(i)
+        if info["maxInputChannels"] > 0:
+            print(f"  [{i}] {info['name']}")
+    print()
 
 def rms_of(raw: bytes) -> float:
     samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
@@ -337,12 +415,17 @@ def save_utterance(frames: list, output_dir: str, idx: int) -> str:
     try:
         wav_io.seek(0)  # IMPORTANT
         if current_state == QA_ALLOW_FIBO or current_state == QA_ALLOW_TELESORTING:
+            context = None
             if current_state == QA_ALLOW_FIBO:
-                context = main.context_fibo()
+                context = main.brain.context_fibo()
             if current_state == QA_ALLOW_TELESORTING:
-                context = main.context_telesorting()
+                context = main.brain.context_telesorting()
             
-            buffer = main.run_kmutt_assistant(wav_io, context)
+            if context is None:
+                print("  ❌ No context available for QA → skipping assistant")
+                play_file_wav("No_response.wav")
+                return path
+            buffer = main.run_kmutt_assistant(audio_input=wav_io, context=context)
             
             if(buffer is not None):
                 print("  Playing assistant response...")
@@ -357,15 +440,18 @@ def save_utterance(frames: list, output_dir: str, idx: int) -> str:
             if current_state == YES_NO_MODE:
                 grammar = '["yes", "no"]'
 
-            user_speech = ears_fix.listen(wav_io)
+            user_speech = ears_fix.listen(wav_io, grammar)
             print(f"  Transcribed text: {user_speech}")
 
-            ans = ears_fix.text_to_number(user_speech, grammar)
-
+            ans = None
+            if current_state == NUMBER_MODE:
+                ans = ears_fix.text_to_number(user_speech)
+            else:
+                ans = user_speech.strip().lower() if user_speech.strip().lower() in ["yes", "no"] else None
             if ans is not None:
                 print(f"  ✅ Detected answer: {ans} → publishing")
                 publish(client = client, 
-                        topic = topic_listener,
+                        topic = topic_publish_listener,
                         value = str(ans))
             else:
                 print("  ❌ No valid answer detected → not publishing")
@@ -377,15 +463,33 @@ def save_utterance(frames: list, output_dir: str, idx: int) -> str:
 
 
 # ─────────────────────────── Main loop ───────────────────────────────────────
-def run(vad_mode: int, output_dir: str, calibrate_first: bool, debug: bool):
+def run(vad_mode: int, output_dir: str, calibrate_first: bool, debug: bool, mic_name: str = None):
     audio  = pyaudio.PyAudio()
+
+    device_index = None
+    if mic_name:
+        try:
+            device_index = find_device_index(audio, mic_name)
+            info = audio.get_device_info_by_index(device_index)
+            print(f"Using mic [{device_index}]: {info['name']}")
+        except ValueError as e:
+            print(f"\nERROR: {e}")
+            audio.terminate()
+            sys.exit(1)
+    else:
+        list_input_devices(audio)
+        print("No --mic specified, using system default input device.")
     stream = audio.open(
         format=pyaudio.paInt16,
         channels=CHANNELS,
         rate=SAMPLE_RATE,
         input=True,
         frames_per_buffer=FRAME_SIZE,
+        input_device_index=device_index,
     )
+
+    idx = device_index if device_index is not None else audio.get_default_input_device_info()["index"]
+    print(f"  🎙  Recording from: [{idx}] {audio.get_device_info_by_index(idx)['name']}")
 
     # ── Calibration / init ───────────────────────────────────────
     if calibrate_first:
@@ -417,13 +521,13 @@ def run(vad_mode: int, output_dir: str, calibrate_first: bool, debug: bool):
     last_db_print = time.time()
 
     try:
-        if current_state == DONT_ALLOW_SPEECH:
-            recording    = False
-            current_utt  = []
-            speech_ring.clear()
-            silence_ring.clear()
-        else:
-            while True:
+        while True:
+            if current_state == DEACTIVATE_VAD:
+                recording    = False
+                current_utt  = []
+                speech_ring.clear()
+                silence_ring.clear()
+            else:
                 raw = stream.read(FRAME_SIZE, exception_on_overflow=False)
                 if len(raw) != FRAME_BYTES:
                     continue
@@ -458,9 +562,8 @@ def run(vad_mode: int, output_dir: str, calibrate_first: bool, debug: bool):
                             silence_ring.clear()
                             print(f"\n  [{utt_idx}] Recording...", end="", flush=True)
                             publish(client = client, 
-                                 topic = topic_in_speak,
+                                 topic = topic_publish_in_speak,
                                  value = "In speak")
-                            play_file_wav("Receiving_question.wav")
                 else:
                     current_utt.append(raw)
                     silence_ring.append(not is_sp)
@@ -476,7 +579,7 @@ def run(vad_mode: int, output_dir: str, calibrate_first: bool, debug: bool):
                             speech_ring.clear()
                             silence_ring.clear()
                             publish(client = client, 
-                                 topic = topic_in_speak,
+                                 topic = topic_publish_in_speak,
                                  value = "No speak")
 
     except KeyboardInterrupt:
@@ -501,6 +604,15 @@ def parse_args():
         epilog="""
 WebRTC aggressiveness (--mode):
   0 = permissive   1 = low   2 = medium [default]   3 = strict
+
+Mic selection (--mic):
+  Pass any substring of your microphone's name (case-insensitive).
+  If omitted, the system default input device is used.
+
+Examples:
+  python vad_recorder.py --mic "Blue Yeti"
+  python vad_recorder.py --mic "USB"
+  python vad_recorder.py --mic "Realtek" --mode 1 --no-calibration
         """
     )
     p.add_argument("--mode", type=int, choices=[0, 1, 2, 3], default=2)
@@ -509,6 +621,8 @@ WebRTC aggressiveness (--mode):
                    help="Skip two-phase calibration")
     p.add_argument("--debug", action="store_true",
                    help="Print per-frame W/E/Z flags")
+    p.add_argument("--mic", default=None,
+                   help='Substring of mic name, e.g. --mic "Blue Yeti" or --mic "USB"')
     return p.parse_args()
 
 # ─────────────────────────── MQTT ─────────────────────────────────────────────
@@ -526,7 +640,9 @@ def connect_mqtt():
 
 
 def publish(client, topic, value):
-    msg_template["value"] = str(value)
+    msg_template["topic"] = topic
+    msg_template["message"] = str(value)
+
     msg_json = json.dumps(msg_template)
 
     result = client.publish(topic, msg_json)
@@ -543,48 +659,49 @@ def subscribe(client: mqtt_client):
 
         try:
             data = json.loads(payload)
-            print(f"Received JSON: {data}")
-            topic = data.get("cmd", "N/A")
-            output = data.get("output", "N/A")
+            # print(f"Received JSON: {data}")
+            topic = data.get("topic", "N/A")
+            output = data.get("message", "N/A")
 
             print(f"[JSON] topic={topic}, output={output}")
 
-            if topic == topic_permission:
+            if topic == topic_receive_permission:
                 global current_state
-                if output in get_state:
-                    current_state = get_state[output]
-                    print(f"Updated state: {output} ({current_state})")
-                else:
-                    print(f"Unknown state in permission topic: {output}")
-            if topic == topic_play_sound:
+                current_state = int(output)
+
+                print(f"Updated state: {num_to_state.get(current_state, 'UNKNOWN')} ({current_state})")
+                print(f"Updated state: {output} ({current_state})")
+            elif topic == topic_receive_play_sound:
                 print(f"Received play sound command: {output}")
-                if os.exists(output):
-                    play_file_wav(output)
-                else:
-                    print(f"Unknown command in tutorial topic: {output}")
+                play_file_wav(output)    
                 publish(client = client, 
-                        topic = topic_in_speak,
+                        topic = topic_publish_in_speak,
                         value = "No speak")
+            else:
+                print(f"Unknown topic in JSON: {topic}")
         except json.JSONDecodeError:
             print(f"[RAW] `{payload}` from `{msg.topic}`")
 
-    client.subscribe(topic_permission)
-    client.subscribe(topic_play_sound)
+    client.subscribe(topic_receive_permission)
+    client.subscribe(topic_receive_play_sound)
     client.on_message = on_message
 
 if __name__ == "__main__":
     args = parse_args()
     print(f"Run with args: {args}\n")
 
-    main.init_all()
-    ears_fix.init_ears()
-
     client = connect_mqtt()
     client.loop_start()
+    subscribe(client)
+    client.loop_start()
+
+    main.init_all()
+    ears_fix.init_ears()
 
     run(
         vad_mode=args.mode,
         output_dir=args.output_dir,
         calibrate_first=not args.no_calibration,
         debug=args.debug,
+        mic_name=args.mic,
     )
