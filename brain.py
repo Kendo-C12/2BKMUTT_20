@@ -16,7 +16,7 @@ def init_brain():
 def context_fibo():
     return ("""
     King Mongkut's University of Technology Thonburi (KMUTT) is a leading engineering and technology university in Thailand, known for innovation, research, and strong programs in science, engineering, and digital technology, with its main campus located in Thung Khru, Bangkok.
-    To Be KMUTT Camp (to be KMUTT Camp) is a preparatory and orientation program designed for high school students interested in studying at KMUTT, providing hands-on activities, workshops, and guidance to help participants explore engineering and technology fields while experiencing university life and building foundational skills needed to be future KMUTT students.
+    to be KMUTT Camp is a preparatory and orientation program designed for high school students interested in studying at KMUTT, providing hands-on activities, workshops, and guidance to help participants explore engineering and technology fields while experiencing university life and building foundational skills needed to be future KMUTT students.
     """
 )
 

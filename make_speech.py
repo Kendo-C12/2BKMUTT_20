@@ -12,7 +12,9 @@ speech_list = {
     "Let me explain the control panel": "explain_control_panel.wav",
     "Let me explain quest one": "explain_quest_1.wav",
     "Do you want the tutorial again?": "tutorial_again.wav",
-    "Let me explain quest two": "explain_quest_1.wav",  # same file as quest 1 (as you defined)
+    "Let me explain quest two": "explain_quest_2.wav",  
+    "Do you want to do quest one?": "wanna_quest_1.wav",
+    "Do you want to do quest two?": "wanna_quest_2.wav",
 }
 
 if __name__ == "__main__":

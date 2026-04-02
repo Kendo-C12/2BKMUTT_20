@@ -92,7 +92,8 @@ REF_RMS = 32768.0         # 16-bit full-scale reference for dBFS
 client = None
 
 client_id = "sound_telesorting"
-broker = 'broker.emqx.io'
+# broker = 'broker.emqx.io'
+broker = '10.22.10.1'
 port = 1883
 
 # publish topic
